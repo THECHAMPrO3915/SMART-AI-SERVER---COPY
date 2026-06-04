@@ -1,0 +1,10 @@
+credentials:
+  usernames:
+    smart_admin:
+      email: admin@smart.com
+      name: Administrator
+      password: "$2b$12$rt7/hAnAzgtzRSQvbiphyOXnucvk56Vb9qbGisGN8l6Kwaz.VrrFG"
+cookie:
+  name: jarvis_session
+  key: random_signature_key_123
+  expiry_days: 30

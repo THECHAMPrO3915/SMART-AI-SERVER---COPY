@@ -1,0 +1,10 @@
+streamlit
+streamlit-authenticator
+PyYAML
+openai
+requests
+pandas
+python-docx
+python-pptx
+fpdf2
+openpyxl
