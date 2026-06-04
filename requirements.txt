@@ -8,3 +8,4 @@ python-docx
 python-pptx
 fpdf2
 openpyxl
+openai
