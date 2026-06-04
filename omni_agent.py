@@ -3,33 +3,36 @@ import json
 import requests
 import time
 import pandas as pd
-from urllib.parse import quote  # Standard way to encode URLs
+from urllib.parse import quote  
 from datetime import datetime
-from huggingface_hub import InferenceClient  # Official Hugging Face SDK client library
+from openai import OpenAI  # Switched back to OpenAI client wrapper for the router
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches
 from fpdf import FPDF
 
 # ==========================================================
-# ⚙️ HUGGING FACE NOVIETA ROUTER CONFIGURATION
+# ⚙️ HUGGING FACE FEATHERLESS ROUTER CONFIGURATION
 # ==========================================================
-HF_MODEL_NAME = "google/gemma-4-31b-it:novita"
+HF_MODEL_NAME = "google/gemma-3-12b-it:featherless-ai"
 
 class UniversalAgent:
     def __init__(self, api_key):
-        # Explicit fallback: if app.py passes an empty string, 
-        # pull directly from the system environment/secrets vault.
+        # Fallback check: if app.py feeds an empty variable, grab it directly
         if not api_key:
             api_key = os.environ.get("HF_TOKEN", "")
             
-        # Initialize using the official Hugging Face Hub client framework
-        self.client = InferenceClient(
-            api_key=api_key
+        # Standardize initialization with the OpenAI wrapper pointing to the router.
+        # We explicitly supply the Authorization header to resolve the 401 response status bugs.
+        self.client = OpenAI(
+            base_url="https://router.huggingface.co/v1",
+            api_key=api_key,
+            default_headers={
+                "Authorization": f"Bearer {api_key}"
+            }
         )
         self.model = HF_MODEL_NAME
         self.session = requests.Session()
-        # Adding a User-Agent prevents security filters from blocking assets downloads
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
@@ -44,7 +47,7 @@ class UniversalAgent:
                 })
             messages.append({"role": "user", "content": prompt})
 
-            # Call the Hugging Face Serverless Chat Completions API layer natively
+            # Calling the OpenAI structured format method
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -112,7 +115,7 @@ class UniversalAgent:
     def create_excel(self, topic, filename):
         try:
             if not filename.endswith(".xlsx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.xlsx"
-            raw_text = self.get_text(f"Provide numerical data tables about '{topic}'. Structure output precisely like this JSON example layout template: {{\"cols\":[\"Header1\",\"Header2\"],\"rows\":[[\"Value1\",\"Value2\"]]}}", is_json=True)
+            raw_text = self.get_text(f"Provide data tables about '{topic}'. Structure output precisely like this JSON layout template: {{\"cols\":[\"Header1\",\"Header2\"],\"rows\":[[\"Value1\",\"Value2\"]]}}", is_json=True)
             data = json.loads(raw_text)
             df = pd.DataFrame(data['rows'], columns=data['cols'])
             df.to_excel(filename, index=False)
@@ -125,7 +128,7 @@ class UniversalAgent:
             if not filename.endswith(".docx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.docx"
             doc = Document()
             doc.add_heading(topic, 0)
-            doc.add_paragraph(self.get_text(f"Write a detailed summary document report about {topic}"))
+            doc.add_paragraph(self.get_text(f"Write a report about {topic}"))
             doc.save(filename)
             return {"message": f"✅ Word Document Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ Word Error: {e}", "file_path": None}
@@ -134,8 +137,8 @@ class UniversalAgent:
     def handle_request(self, user_prompt):
         brain_p = f"""
         User Prompt: "{user_prompt}"
-        Determine the file output goal destination mechanism. Options: pdf, ppt, excel, word, text.
-        Return raw JSON mapping metadata elements matching this architectural template footprint exactly: {{"tool": "selected_option", "subject": "the_subject", "file": "filename"}}
+        Determine the file output goal. Options: pdf, ppt, excel, word, text.
+        Return raw JSON only matching this template layout layout architectural rule footprint footprint footprint explicitly: {{"tool": "selected_option", "subject": "the_subject", "file": "filename"}}
         """
         try:
             raw_res = self.get_text(brain_p, is_json=True)
