@@ -1,7 +1,7 @@
 streamlit
 streamlit-authenticator
 PyYAML
-openai
+huggingface_hub
 requests
 pandas
 python-docx
