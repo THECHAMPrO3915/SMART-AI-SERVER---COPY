@@ -3,38 +3,33 @@ import json
 import requests
 import time
 import pandas as pd
-from urllib.parse import quote  
+from urllib.parse import quote  # Standard way to encode URLs
 from datetime import datetime
-from openai import OpenAI
+from huggingface_hub import InferenceClient  # Official Hugging Face SDK client library
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches
 from fpdf import FPDF
 
 # ==========================================================
-# ⚙️ HUGGING FACE ROUTER CONFIGURATION
+# ⚙️ HUGGING FACE NOVIETA ROUTER CONFIGURATION
 # ==========================================================
-# We target the standard router footprint name
-HF_MODEL_NAME = "google/gemma-4-31b-it" 
+HF_MODEL_NAME = "google/gemma-4-31b-it:novita"
 
 class UniversalAgent:
     def __init__(self, api_key):
-        # Fallback security check: if app.py passes None or empty string,
-        # try pulling it straight from environment/secrets directly as a backup.
+        # Explicit fallback: if app.py passes an empty string, 
+        # pull directly from the system environment/secrets vault.
         if not api_key:
             api_key = os.environ.get("HF_TOKEN", "")
             
-        # The new HF router expects the token passed cleanly into the OpenAI client creator.
-        # We also pass explicit Authorization Headers to ensure it never strips the token.
-        self.client = OpenAI(
-            base_url="https://router.huggingface.co/v1",
-            api_key=api_key,
-            default_headers={
-                "Authorization": f"Bearer {api_key}"
-            }
+        # Initialize using the official Hugging Face Hub client framework
+        self.client = InferenceClient(
+            api_key=api_key
         )
         self.model = HF_MODEL_NAME
         self.session = requests.Session()
+        # Adding a User-Agent prevents security filters from blocking assets downloads
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
@@ -49,12 +44,12 @@ class UniversalAgent:
                 })
             messages.append({"role": "user", "content": prompt})
 
+            # Call the Hugging Face Serverless Chat Completions API layer natively
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                response_format={"type": "json_object"} if is_json else None,
                 temperature=0.1 if is_json else 0.7,
-                extra_headers={"X-Wait-For-Model": "true"}  # Keeps connection open while model loads
+                max_tokens=1500
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -92,12 +87,12 @@ class UniversalAgent:
                 os.remove(img)
 
             pdf.set_font("helvetica", size=12)
-            raw_text = self.get_text(f"Write a 3-paragraph report on {topic}")
+            raw_text = self.get_text(f"Write a comprehensive 3-paragraph report on {topic}")
             clean_text = raw_text.encode('latin-1', 'ignore').decode('latin-1')
             pdf.multi_cell(0, 10, txt=clean_text)
             
             pdf.output(filename)
-            return {"message": f"✅ PDF Created: {topic}", "file_path": filename}
+            return {"message": f"✅ PDF Document Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ PDF Error: {e}", "file_path": None}
 
     # --- 📽️ PPT GENERATION ---
@@ -108,20 +103,20 @@ class UniversalAgent:
             for i in range(slides):
                 slide = prs.slides.add_slide(prs.slide_layouts[1])
                 slide.shapes.title.text = f"{topic} - Slide {i+1}"
-                slide.placeholders[1].text = self.get_text(f"Bullet points for {topic}, part {i+1}")
+                slide.placeholders[1].text = self.get_text(f"Generate presentation bullet points for {topic}, part {i+1}")
             prs.save(filename)
-            return {"message": f"✅ PPT Created: {topic}", "file_path": filename}
+            return {"message": f"✅ Presentation Slides Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ PPT Error: {e}", "file_path": None}
 
     # --- 📊 EXCEL GENERATION ---
     def create_excel(self, topic, filename):
         try:
             if not filename.endswith(".xlsx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.xlsx"
-            raw_text = self.get_text(f"Generate tabular data about '{topic}'. Structure layout exactly matching this template layout: {{\"cols\":[\"Col1\",\"Col2\"],\"rows\":[[\"Val1\",\"Val2\"]]}}", is_json=True)
+            raw_text = self.get_text(f"Provide numerical data tables about '{topic}'. Structure output precisely like this JSON example layout template: {{\"cols\":[\"Header1\",\"Header2\"],\"rows\":[[\"Value1\",\"Value2\"]]}}", is_json=True)
             data = json.loads(raw_text)
             df = pd.DataFrame(data['rows'], columns=data['cols'])
             df.to_excel(filename, index=False)
-            return {"message": f"✅ Excel Created: {topic}", "file_path": filename}
+            return {"message": f"✅ Excel Spreadsheet Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ Excel Error: {e}", "file_path": None}
 
     # --- 📝 WORD GENERATION ---
@@ -130,17 +125,17 @@ class UniversalAgent:
             if not filename.endswith(".docx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.docx"
             doc = Document()
             doc.add_heading(topic, 0)
-            doc.add_paragraph(self.get_text(f"Write a report about {topic}"))
+            doc.add_paragraph(self.get_text(f"Write a detailed summary document report about {topic}"))
             doc.save(filename)
-            return {"message": f"✅ Word Doc Created: {topic}", "file_path": filename}
+            return {"message": f"✅ Word Document Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ Word Error: {e}", "file_path": None}
 
     # --- 🧠 DISPATCHER ---
     def handle_request(self, user_prompt):
         brain_p = f"""
         User Prompt: "{user_prompt}"
-        Determine intended file output mechanism. Select an option: pdf, ppt, excel, word, text.
-        Return raw JSON mapping key pairs explicitly matching this template format: {{"tool": "selected_option", "subject": "the_subject", "file": "target_filename"}}
+        Determine the file output goal destination mechanism. Options: pdf, ppt, excel, word, text.
+        Return raw JSON mapping metadata elements matching this architectural template footprint exactly: {{"tool": "selected_option", "subject": "the_subject", "file": "filename"}}
         """
         try:
             raw_res = self.get_text(brain_p, is_json=True)
