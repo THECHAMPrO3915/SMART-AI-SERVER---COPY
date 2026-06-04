@@ -5,26 +5,24 @@ import time
 import pandas as pd
 from urllib.parse import quote  
 from datetime import datetime
-from openai import OpenAI  
+from huggingface_hub import InferenceClient  # Official Hugging Face client library
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches
 from fpdf import FPDF
 
 # ==========================================================
-# ⚙️ HUGGING FACE STABLE ENDPOINT ROUTING
+# ⚙️ HUGGING FACE STABLE GEMMA CONFIGURATION
 # ==========================================================
 HF_MODEL_NAME = "google/gemma-4-31b-it" 
 
 class UniversalAgent:
     def __init__(self, api_key):
-        # We target the standard inference base URL
-        # Hugging Face serverless handles routing using the model string parameter
-        self.client = OpenAI(
-            base_url="https://api-inference.huggingface.co/v1",
-            api_key=api_key
+        # Using the official Hugging Face inference handler directly
+        self.client = InferenceClient(
+            model=HF_MODEL_NAME,
+            token=api_key
         )
-        self.model = HF_MODEL_NAME
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -40,14 +38,11 @@ class UniversalAgent:
                 })
             messages.append({"role": "user", "content": prompt})
 
-            # CRITICAL: We explicitly set a larger timeout limit (e.g., 60.0s) 
-            # to let the massive 31B model load up in the background without throwing connection errors.
-            response = self.client.chat.completions.create(
-                model=self.model,
+            # The official client natively waits for the 31B model to warm up without throwing connection timeouts
+            response = self.client.chat_completion(
                 messages=messages,
-                response_format={"type": "json_object"} if is_json else None,
                 temperature=0.1 if is_json else 0.7,
-                extra_headers={"X-Wait-For-Model": "true"}  # Tells HF to wait for the model to load
+                max_tokens=1000
             )
             return response.choices[0].message.content
         except Exception as e:
