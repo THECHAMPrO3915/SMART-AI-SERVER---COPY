@@ -5,25 +5,24 @@ import time
 import pandas as pd
 from urllib.parse import quote  
 from datetime import datetime
-from openai import OpenAI  # Leveraging standard OpenAI client library for Hugging Face connectivity
+from openai import OpenAI  
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches
 from fpdf import FPDF
 
 # ==========================================================
-# ⚙️ HUGGING FACE SERVERLESS CONFIGURATION
+# ⚙️ HUGGING FACE STABLE ENDPOINT ROUTING
 # ==========================================================
-# Exact repository ID for the dense Gemma 4 31B instruction-tuned variant
 HF_MODEL_NAME = "google/gemma-4-31b-it" 
-HF_API_URL = "https://api-inference.huggingface.co/v1"
 
 class UniversalAgent:
     def __init__(self, api_key):
-        # Point the client directly to the Hugging Face serverless engine
+        # We target the standard inference base URL
+        # Hugging Face serverless handles routing using the model string parameter
         self.client = OpenAI(
-            base_url=HF_API_URL,
-            api_key=api_key  # This reads your User Access Token passed from app.py
+            base_url="https://api-inference.huggingface.co/v1",
+            api_key=api_key
         )
         self.model = HF_MODEL_NAME
         self.session = requests.Session()
@@ -35,20 +34,20 @@ class UniversalAgent:
         try:
             messages = []
             if is_json:
-                # For structural parsing, we use a system role instruction with the <|think|> trigger 
-                # to optimize Gemma 4's chain-of-thought routing for schema compliance.
                 messages.append({
                     "role": "system", 
                     "content": "<|think|> You are a strict JSON structural engine. Output raw JSON ONLY. No formatting markdown backticks (such as ```json). Drop all introduction text or conversational pleasantries."
                 })
             messages.append({"role": "user", "content": prompt})
 
+            # CRITICAL: We explicitly set a larger timeout limit (e.g., 60.0s) 
+            # to let the massive 31B model load up in the background without throwing connection errors.
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 response_format={"type": "json_object"} if is_json else None,
-                # Gemma 4 works beautifully with standard low temperature bounds when generating schemas
-                temperature=0.1 if is_json else 0.7 
+                temperature=0.1 if is_json else 0.7,
+                extra_headers={"X-Wait-For-Model": "true"}  # Tells HF to wait for the model to load
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -102,7 +101,7 @@ class UniversalAgent:
             for i in range(slides):
                 slide = prs.slides.add_slide(prs.slide_layouts[1])
                 slide.shapes.title.text = f"{topic} - Slide {i+1}"
-                slide.placeholders[1].text = self.get_text(f"Generate educational presentation bullet points for {topic}, subsection breakdown {i+1}")
+                slide.placeholders[1].text = self.get_text(f"Generate presentation bullet points for {topic}, part {i+1}")
             prs.save(filename)
             return {"message": f"✅ Presentation Slides Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ PPT Error: {e}", "file_path": None}
@@ -111,7 +110,7 @@ class UniversalAgent:
     def create_excel(self, topic, filename):
         try:
             if not filename.endswith(".xlsx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.xlsx"
-            raw_text = self.get_text(f"Provide numerical data about '{topic}'. Structure your output to match this specific schema architecture template layout: {{\"cols\":[\"DataHeader1\",\"DataHeader2\"],\"rows\":[[\"Value1\",\"Value2\"]]}}", is_json=True)
+            raw_text = self.get_text(f"Provide data tables about '{topic}'. Structure output precisely like this JSON example template: {{\"cols\":[\"Header1\",\"Header2\"],\"rows\":[[\"Value1\",\"Value2\"]]}}", is_json=True)
             data = json.loads(raw_text)
             df = pd.DataFrame(data['rows'], columns=data['cols'])
             df.to_excel(filename, index=False)
@@ -124,7 +123,7 @@ class UniversalAgent:
             if not filename.endswith(".docx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.docx"
             doc = Document()
             doc.add_heading(topic, 0)
-            doc.add_paragraph(self.get_text(f"Write a detailed summary analysis report focusing on {topic}"))
+            doc.add_paragraph(self.get_text(f"Write a report about {topic}"))
             doc.save(filename)
             return {"message": f"✅ Word Document Created: {topic}", "file_path": filename}
         except Exception as e: return {"message": f"❌ Word Error: {e}", "file_path": None}
@@ -133,8 +132,8 @@ class UniversalAgent:
     def handle_request(self, user_prompt):
         brain_p = f"""
         User Prompt: "{user_prompt}"
-        Isolate the objective action parameters. Choose one target mechanism format: pdf, ppt, excel, word, text.
-        Return raw JSON containing your output mappings built precisely to match this footprint: {{"tool": "target_mechanism", "subject": "extracted_topic", "file": "clean_filename"}}
+        Determine the file output goal. Options: pdf, ppt, excel, word, text.
+        Return raw JSON only matching this template: {{"tool": "selected_option", "subject": "the_subject", "file": "filename"}}
         """
         try:
             raw_res = self.get_text(brain_p, is_json=True)
@@ -156,13 +155,3 @@ class UniversalAgent:
         except (json.JSONDecodeError, Exception):
             chat_reply = self.get_text(user_prompt)
             return json.dumps({"message": chat_reply, "file_path": None})
-
-if __name__ == "__main__":
-    HF_TOKEN = "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # Replace with token for localized manual testing
-    agent = UniversalAgent(HF_TOKEN)
-    print("--- 🤖 Omni-Agent (Hugging Face Gemma 4 31B IT Dense Backend) ---")
-    while True:
-        inp = input("\nYou: ").strip()
-        if not inp: break
-        response_data = json.loads(agent.handle_request(inp))
-        print(f"Agent Message: {response_data['message']}")
