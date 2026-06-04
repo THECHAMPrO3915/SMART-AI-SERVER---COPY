@@ -3,7 +3,7 @@ import json
 import requests
 import time
 import pandas as pd
-from urllib.parse import quote  # Standard way to encode URLs
+from urllib.parse import quote  
 from datetime import datetime
 from openai import OpenAI
 from docx import Document
@@ -14,12 +14,18 @@ from fpdf import FPDF
 # ==========================================================
 # ⚙️ HUGGING FACE ROUTER CONFIGURATION
 # ==========================================================
+# We target the standard router footprint name
 HF_MODEL_NAME = "google/gemma-4-31b-it" 
 
 class UniversalAgent:
     def __init__(self, api_key):
-        # We explicitly pass the token inside extra_headers to avoid 
-        # the 401 Unauthorized error caused by the OpenAI SDK wrapper format.
+        # Fallback security check: if app.py passes None or empty string,
+        # try pulling it straight from environment/secrets directly as a backup.
+        if not api_key:
+            api_key = os.environ.get("HF_TOKEN", "")
+            
+        # The new HF router expects the token passed cleanly into the OpenAI client creator.
+        # We also pass explicit Authorization Headers to ensure it never strips the token.
         self.client = OpenAI(
             base_url="https://router.huggingface.co/v1",
             api_key=api_key,
@@ -43,20 +49,18 @@ class UniversalAgent:
                 })
             messages.append({"role": "user", "content": prompt})
 
-            # Added the native wait parameter header so the 31B model 
-            # has enough time to load without causing a Connection Error.
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 response_format={"type": "json_object"} if is_json else None,
                 temperature=0.1 if is_json else 0.7,
-                extra_headers={"X-Wait-For-Model": "true"}
+                extra_headers={"X-Wait-For-Model": "true"}  # Keeps connection open while model loads
             )
             return response.choices[0].message.content
         except Exception as e:
             return "{}" if is_json else f"Error: {e}"
 
-    # --- 🎨 FIXED: IMAGE GEN (FOR PPT/PDF) ---
+    # --- 🎨 IMAGE GEN (FOR PPT/PDF) ---
     def _generate_temp_image(self, prompt):
         try:
             encoded_prompt = quote(prompt)
@@ -113,7 +117,7 @@ class UniversalAgent:
     def create_excel(self, topic, filename):
         try:
             if not filename.endswith(".xlsx"): filename = f"{topic.replace(' ', '_')}_{int(time.time())}.xlsx"
-            raw_text = self.get_text(f"Generate simple numerical tabular data about '{topic}'. Structure your output strictly using this raw JSON layout configuration: {{\"cols\":[\"HeadingA\",\"HeadingB\"],\"rows\":[[\"DataRow1A\",\"DataRow1B\"]]}}", is_json=True)
+            raw_text = self.get_text(f"Generate tabular data about '{topic}'. Structure layout exactly matching this template layout: {{\"cols\":[\"Col1\",\"Col2\"],\"rows\":[[\"Val1\",\"Val2\"]]}}", is_json=True)
             data = json.loads(raw_text)
             df = pd.DataFrame(data['rows'], columns=data['cols'])
             df.to_excel(filename, index=False)
@@ -158,12 +162,3 @@ class UniversalAgent:
         except (json.JSONDecodeError, Exception):
             chat_reply = self.get_text(user_prompt)
             return json.dumps({"message": chat_reply, "file_path": None})
-
-if __name__ == "__main__":
-    agent = UniversalAgent("YOUR_HF_TOKEN")
-    print("--- 🤖 Omni-Agent (Online) ---")
-    while True:
-        inp = input("\nYou: ").strip()
-        if not inp: break
-        response_data = json.loads(agent.handle_request(inp))
-        print(f"Response: {response_data}")
